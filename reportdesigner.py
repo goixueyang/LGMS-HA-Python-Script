@@ -21,66 +21,91 @@ def clean_text(text):
         return ""
 
     try:
-        # Replace _x000D_ with a newline character (\n)
+        # Replace _x000D_ with an empty string ('')
         s = s.replace('_x000D_', '')
         s = s.strip() # Still strip overall leading/trailing whitespace
         return s
     except Exception as e:
         return ""
 
-def create_standardized_key(text):
+def extract_numerical_prefix(text):
+    """
+    Extracts the leading numerical prefix from a string.
+    e.g., "6.10 Set 'Recovery console..." -> "6.10"
+    """
+    if not isinstance(text, str):
+        return ""
+    s = text.strip()
+    # Match a sequence of digits and dots, optionally followed by space/comma/semicolon/dash
+    # This captures the numerical part like '6.10'
+    match = re.match(r"^\s*(\d+(\.\d+)*)\s*(?:[.,;:\-—]\s*)?", s) # Added non-capturing group for separator
+    return match.group(1).strip() if match else ""
+
+def create_fuzzy_text_key(text):
     """
     Standardizes text for matching by removing specific prefixes, suffixes, and normalizing.
-    This aims to create a 'core' setting string for lookup.
+    This aims to create a 'core' setting string for lookup, explicitly preserving
+    content within parentheses for better distinction. It also explicitly removes
+    any leading numbering, as that will be handled by extract_numerical_prefix.
     """
     if not isinstance(text, str):
         return ""
 
-    s = str(text) # Ensure it's a string for initial processing
-    if not s.strip() or s.lower() == 'nan' or s.lower() == 'none':
-        return ""
+    s = clean_text(text) # Use existing clean_text for initial cleaning (removes _x000D_, strips)
+    s = s.replace('\n', ' ').replace('\r', ' ') # Ensure newlines become spaces for key creation
+    s = re.sub(r'\s{2,}', ' ', s).strip() # Normalize whitespace
 
-    try:
-        s = s.replace('\n', ' ').replace('\r', ' ').replace('_x000D_', ' ') # Still replace with space for key generation
-        s = re.sub(r'\s{2,}', ' ', s)
-        s = s.strip()
-    except Exception as e:
-        return "" # Return empty string on error
+    # 1. Remove leading numbering (if any) and any separators following it
+    s = re.sub(r"^\s*\d+(\.\d+)*\s*(?:[.,;:\-—]\s*)?", "", s).strip()
+    s = re.sub(r'\s{2,}', ' ', s).strip() # Re-normalize spaces after removal
 
-    cleaned_text = s # Use the aggressively cleaned string for key generation
+    # 2. Explicitly extract text within the first set of parentheses, and remove from main text temporarily
+    parentheses_content = ""
+    match_paren = re.search(r'\((.*?)\)', s)
+    if match_paren:
+        parentheses_content = match_paren.group(1).strip()
+        # Replace the full matched parenthesis content with a space to avoid issues, then strip
+        s = s.replace(match_paren.group(0), ' ').strip()
+        s = re.sub(r'\s{2,}', ' ', s).strip() # Re-normalize spaces after removal
 
-    # Handle the middle dot '·' which acts as a separator in some template entries
-    cleaned_text = cleaned_text.replace('·', ' ')
-
-    # 1. Remove numbering like "1.1.1. ", "6.17 ", etc. at the beginning.
-    cleaned_text = re.sub(r"^\s*(\d+(\.\d+)*(\.|\s|,|,|;|\-)*)+\s*", "", cleaned_text).strip()
-
-    # 2. Extract content within quotes if present. If not, remove common leading verbs/phrases.
-    match_quoted = re.search(r"['“‘](.*?)[’”']", cleaned_text)
+    # 3. Apply the rest of the cleaning to the remaining_text
+    match_quoted = re.search(r"['“‘](.*?)[’”']", s)
     if match_quoted:
-        cleaned_text = match_quoted.group(1).strip()
+        core_text = match_quoted.group(1).strip()
     else:
         # This list of leading phrases to remove is tuned based on observed CIMB key behavior.
-        cleaned_text = re.sub(r"^(?:configure|ensure|set|enable|disable|turn on|check|verify)\s*", "", cleaned_text, flags=re.IGNORECASE).strip()
+        core_text = re.sub(r"^(?:configure|ensure|set|enable|disable|turn on|check|verify)\s*", "", s, flags=re.IGNORECASE).strip()
 
-    # 3. Remove common state suffixes (e.g., ": Enabled", "to: Disabled", or just "Enabled")
-    cleaned_text = re.sub(r'(?:\s*[:.]?\s*(?:enabled|disabled|not configured|configured|pass|fail|completed|installation|installed|true|false|yes|no))\s*$', '', cleaned_text, flags=re.IGNORECASE).strip()
+    # 4. Remove common state suffixes (e.g., ": Enabled", "to: Disabled", or just "Enabled")
+    core_text = re.sub(r'(?:\s*[:.]?\s*(?:enabled|disabled|not configured|configured|pass|fail|completed|installation|installed|true|false|yes|no))\s*$', '', core_text, flags=re.IGNORECASE).strip()
 
-    # 4. Remove 'to:' or 'is:' at the end if it's left over (common in "Set X to:" or "Ensure X is:")
-    cleaned_text = re.sub(r'\s*(?:to|is):?\s*$', '', cleaned_text, flags=re.IGNORECASE).strip()
+    # 5. Remove 'to:' or 'is:' at the end if it's left over (common in "Set X to:" or "Ensure X is:")
+    core_text = re.sub(r'\s*(?:to|is):?\s*$', '', core_text, flags=re.IGNORECASE).strip()
 
-    # 5. Remove specific common phrases that are not part of the core setting (e.g., "(PAM)", "Installation")
-    cleaned_text = re.sub(r'\s*\(pam\)\s*$', '', cleaned_text, flags=re.IGNORECASE).strip()
-    cleaned_text = re.sub(r'\s*\(av/am\)\s*$', '', cleaned_text, flags=re.IGNORECASE).strip()
-    cleaned_text = re.sub(r'\s*\(edr\)\s*$', '', cleaned_text, flags=re.IGNORECASE).strip()
-    cleaned_text = re.sub(r'installation\s*$', '', cleaned_text, flags=re.IGNORECASE).strip()
-    cleaned_text = re.sub(r'security baseline\s*$', '', cleaned_text, flags=re.IGNORECASE).strip()
+    # 6. Remove specific common phrases that are not part of the core setting (e.g., "(PAM)", "Installation")
+    core_text = re.sub(r'\s*\(pam\)\s*$', '', core_text, flags=re.IGNORECASE).strip()
+    core_text = re.sub(r'\s*\(av/am\)\s*$', '', core_text, flags=re.IGNORECASE).strip()
+    core_text = re.sub(r'\s*\(edr\)\s*$', '', core_text, flags=re.IGNORECASE).strip()
+    core_text = re.sub(r'installation\s*$', '', core_text, flags=re.IGNORECASE).strip()
+    core_text = re.sub(r'security baseline\s*$', '', core_text, flags=re.IGNORECASE).strip()
 
-    # 6. Aggressive punctuation removal (except for space) and final space/case normalization
-    cleaned_text = re.sub(r'[^a-zA-Z0-9\s]', '', cleaned_text).strip()
-    cleaned_text = re.sub(r'\s{2,}', ' ', cleaned_text).strip()
+    # General cleanup for core text: replace non-alphanumeric (except space) with space, then normalize
+    core_text = re.sub(r'[^a-zA-Z0-9\s]', ' ', core_text).strip()
+    core_text = re.sub(r'\s{2,}', ' ', core_text).strip()
 
-    return cleaned_text.lower()
+    # 7. Assemble the final key for the text part
+    final_key_parts = []
+    final_key_parts.append(core_text)
+
+    if parentheses_content:
+        # Clean the parentheses_content separately to ensure it's standardized
+        parentheses_content_cleaned = re.sub(r'[^a-zA-Z0-9\s]', ' ', parentheses_content).strip()
+        parentheses_content_cleaned = re.sub(r'\s{2,}', ' ', parentheses_content_cleaned).strip()
+        if parentheses_content_cleaned: # Only append if it's not empty after cleaning
+            final_key_parts.append("(" + parentheses_content_cleaned + ")")
+
+    final_key = " ".join(part for part in final_key_parts if part).strip()
+    return final_key.lower()
 
 
 def generate_consolidated_report_from_excel(
@@ -97,38 +122,47 @@ def generate_consolidated_report_from_excel(
             sheet_name=host_config_template_sheet_name,
             header=1,
             dtype={'Settings': str, 'Description': str, 'Value': str},
-            engine='openpyxl' # ADDED: Specify engine for template
+            engine='openpyxl'
         )
         template_df['Description_Clean'] = template_df['Description'].apply(clean_text)
         template_df['Original_Setting_Raw'] = template_df['Settings'].astype(str).replace(np.nan, "").apply(clean_text)
-        template_df['Matching_Key'] = template_df['Settings'].apply(create_standardized_key)
+        
+        # Extract numerical prefix for template
+        template_df['Numerical_Prefix_Template'] = template_df['Settings'].apply(extract_numerical_prefix)
+        # Create fuzzy text key for template, ensuring numbers are removed
+        template_df['Fuzzy_Text_Key_Template'] = template_df['Settings'].apply(create_fuzzy_text_key)
+
         template_df['Recommended_Value_Template'] = template_df['Value'].apply(clean_text)
 
         template_map = {}
         for idx, row in template_df.iterrows():
-            matching_key = row['Matching_Key']
-            if not matching_key:
-                continue
-            description_for_map = row['Description_Clean'] if pd.notna(row['Description_Clean']) else ""
-            original_setting_for_map = row['Original_Setting_Raw']
-            recommended_value_for_map = row['Recommended_Value_Template']
+            # Composite key for template_map: (Numerical Prefix, Fuzzy Text Key)
+            composite_key = (row['Numerical_Prefix_Template'], row['Fuzzy_Text_Key_Template'])
+            
+            # Ensure at least one part of the composite key is not empty
+            if not composite_key[0] and not composite_key[1]:
+                continue # Skip if both parts are empty
 
-            if matching_key not in template_map:
-                template_map[matching_key] = {
-                    'description': description_for_map,
-                    'original_setting': original_setting_for_map,
-                    'recommended_value': recommended_value_for_map
-                }
+            entry_data = {
+                'original_setting': row['Original_Setting_Raw'],
+                'description': row['Description_Clean'] if pd.notna(row['Description_Clean']) else "",
+                'recommended_value': row['Recommended_Value_Template'],
+                'numerical_prefix': row['Numerical_Prefix_Template'] # Store numerical prefix in entry_data too
+            }
+
+            # If there are multiple entries for the exact same composite key in the template,
+            # this indicates an ambiguity in the template itself. Concatenate information.
+            if composite_key not in template_map:
+                template_map[composite_key] = entry_data
             else:
-                current_description = template_map[matching_key]['description']
-                current_original_setting = template_map[matching_key]['original_setting']
-                current_recommended_value = template_map[matching_key]['recommended_value']
-                if original_setting_for_map and original_setting_for_map not in current_original_setting:
-                     template_map[matching_key]['original_setting'] = current_original_setting + " | " + original_setting_for_map
-                if description_for_map and description_for_map not in current_description:
-                    template_map[matching_key]['description'] = current_description + " | " + description_for_map
-                if recommended_value_for_map and recommended_value_for_map not in current_recommended_value:
-                     template_map[matching_key]['recommended_value'] = current_recommended_value + " | " + recommended_value_for_map
+                # Merge information if composite key already exists (e.g., duplicate entries in template)
+                existing_entry = template_map[composite_key]
+                if entry_data['original_setting'] and entry_data['original_setting'] not in existing_entry['original_setting']:
+                    existing_entry['original_setting'] += " | " + entry_data['original_setting']
+                if entry_data['description'] and entry_data['description'] not in existing_entry['description']:
+                    existing_entry['description'] += " | " + entry_data['description']
+                if entry_data['recommended_value'] and entry_data['recommended_value'] not in existing_entry['recommended_value']:
+                    existing_entry['recommended_value'] += " | " + entry_data['recommended_value']
         print("Host configuration template loaded and processed.")
     except Exception as e:
         print(f"Error loading or processing host configuration template: {e}")
@@ -158,20 +192,38 @@ def generate_consolidated_report_from_excel(
                 cimb_ha_excel_file,
                 sheet_name=sheet_name,
                 header=0,
-                dtype={'Settings': str, 'Current': str, 'Recommended State': str},
-                engine='openpyxl' # ADDED: Specify engine for CIMB HA report sheets
+                dtype={'Settings': str, 'Current': str, 'Recommended State': str, 'Report Type': str, 'CIMB NO.': str},
+                engine='openpyxl'
             )
             if 'Settings' not in cimb_df.columns or 'Current' not in cimb_df.columns:
                 print(f"Warning: Sheet '{ip_address}' from '{cimb_ha_excel_file}' is missing 'Settings' or 'Current' column. Skipping.")
                 continue
             if 'Recommended State' not in cimb_df.columns:
                 cimb_df['Recommended State'] = ''
+            
+            # Ensure 'CIMB NO.' column exists for keying
+            if 'CIMB NO.' not in cimb_df.columns:
+                print(f"Warning: Sheet '{ip_address}' is missing 'CIMB NO.' column. This column is essential for matching. Please ensure it is present or the matching might be inaccurate. Attempting to extract from 'Settings' as fallback.")
+                cimb_df['CIMB NO.'] = cimb_df['Settings'].apply(extract_numerical_prefix) # Fallback if missing
 
-            cimb_df['Matching_Key'] = cimb_df['Settings'].apply(create_standardized_key)
-
+            cimb_df['Numerical_Prefix_CIMB'] = cimb_df['CIMB NO.'].astype(str).replace(np.nan, "").apply(clean_text)
+            cimb_df['Fuzzy_Text_Key_CIMB'] = cimb_df['Settings'].apply(create_fuzzy_text_key)
+            
             not_configured_df = cimb_df[
                 cimb_df['Current'].astype(str).str.strip().str.lower() == 'not configured'
             ].copy()
+
+            # DEBUG: Print initial 'not configured' items to verify presence at this stage
+            print(f"DEBUG: 'Not Configured' items before specific type filtering for {ip_address}:\n{not_configured_df[['CIMB NO.', 'Settings', 'Current', 'Fuzzy_Text_Key_CIMB']].head(10)}")
+
+            report_type = ""
+            # Assuming 'Report Type' is a single value for the sheet, find it from a non-empty cell
+            if 'Report Type' in cimb_df.columns and not cimb_df['Report Type'].empty:
+                # Find the first non-NaN, non-empty string value in the 'Report Type' column
+                report_type_series = cimb_df['Report Type'].dropna().astype(str)
+                if not report_type_series.empty:
+                    report_type = report_type_series.iloc[0].strip()
+            print(f"Report Type for sheet '{ip_address}': '{report_type}'")
 
             if not not_configured_df.empty:
                 print(f"DEBUG: Found {len(not_configured_df)} 'not configured' items in sheet '{ip_address}'.")
@@ -179,11 +231,57 @@ def generate_consolidated_report_from_excel(
                 current_sheet_two_row_data = []
                 row_number = 1
                 for index, row in not_configured_df.iterrows():
-                    matching_key = row['Matching_Key']
-                    template_info = template_map.get(matching_key, {})
+                    # For filtering, we still use the fuzzy text key, as the (Domain Controller only) is embedded there
+                    fuzzy_key_for_filtering = row['Fuzzy_Text_Key_CIMB']
+                    should_include = False
+
+                    # Determine if the setting has a specific DC or MS qualifier
+                    is_dc_setting = '(domain controller only)' in fuzzy_key_for_filtering
+                    is_ms_setting = '(member servers only)' in fuzzy_key_for_filtering
+
+                    # Apply inclusion logic based on report type and setting qualifiers
+                    if report_type.lower() == 'domain controller':
+                        # For a DC report, include DC specific settings OR general settings
+                        if is_dc_setting or (not is_dc_setting and not is_ms_setting):
+                            should_include = True
+                        else:
+                            print(f"Skipping setting for Domain Controller '{ip_address}' due to specific type mismatch: {row.get('Settings')}")
+                    elif report_type.lower() == 'member server':
+                        # For an MS report, include MS specific settings OR general settings
+                        if is_ms_setting or (not is_dc_setting and not is_ms_setting):
+                            should_include = True
+                        else:
+                            print(f"Skipping setting for Member Server '{ip_address}' due to specific type mismatch: {row.get('Settings')}")
+                    else: # Handle cases where report_type is not clearly 'domain controller' or 'member server'
+                        # If report type is ambiguous, default to including only general settings (no explicit DC/MS qualifier)
+                        if not is_dc_setting and not is_ms_setting:
+                            should_include = True
+                        else:
+                            print(f"Skipping specific setting for unknown report type '{report_type}' at '{ip_address}': {row.get('Settings')}")
+
+                    # DEBUG: Print the decision for each row
+                    print(f"DEBUG: Processing '{row.get('Settings', 'N/A')}' (CIMB NO: '{row.get('CIMB NO.', 'N/A')}', Fuzzy Key: '{fuzzy_key_for_filtering}'). Report Type: '{report_type}'. IsDC: {is_dc_setting}, IsMS: {is_ms_setting}. Should Include: {should_include}.")
+
+
+                    if not should_include:
+                        continue # Skip to the next row if the item should not be included
+
+                    # Create the composite lookup key using numerical prefix and fuzzy text key
+                    lookup_key = (row['Numerical_Prefix_CIMB'], row['Fuzzy_Text_Key_CIMB'])
+                    template_info = template_map.get(lookup_key, {})
 
                     description = template_info.get('description', "Description not found in template")
-                    output_setting = template_info.get('original_setting', row.get('Settings', ''))
+
+                    # Prioritize output_setting from template_info if a match was found.
+                    if template_info:
+                        output_setting = template_info.get('original_setting', '')
+                        print(f"DEBUG: Match found for '{lookup_key}'. Using template setting: '{output_setting}'")
+                    else:
+                        # If no template match, use CIMB HA report's setting, but clean it first
+                        raw_cimb_setting = row.get('Settings', '')
+                        output_setting = clean_text(raw_cimb_setting) # Apply clean_text here
+                        print(f"DEBUG: No template match found for '{lookup_key}'. Using CIMB setting: '{output_setting}'")
+
                     recommended_value_from_template = template_info.get('recommended_value', '')
 
                     # Row 1 (Odd Row)
@@ -208,24 +306,26 @@ def generate_consolidated_report_from_excel(
 
                     row_number += 1
 
-                sheet_df = pd.DataFrame(current_sheet_two_row_data, columns=final_columns)
-                results_by_sheet[ip_address] = sheet_df
+                if current_sheet_two_row_data:
+                    sheet_df = pd.DataFrame(current_sheet_two_row_data, columns=final_columns)
+                    results_by_sheet[ip_address] = sheet_df
+                else:
+                    print(f"DEBUG: No relevant 'not configured' items found for sheet '{ip_address}' after filtering. This sheet will not be in the final report.")
             else:
                 print(f"DEBUG: No 'not configured' items found in sheet '{ip_address}'. This sheet will not be in the final report.")
 
         except Exception as e:
             print(f"Error processing CIMB HA Excel sheet '{sheet_name}' in file '{cimb_ha_excel_file}': {e}")
+            traceback.print_exc()
             continue
 
     if results_by_sheet:
-        # Prompt user for logo path before starting Excel writing
         logo_path = input("Please enter the full path to the LGMS logo image (e.g., C:\\path\\to\\logo.png): ")
-        # Strip any leading/trailing double quotes from the path
         logo_path = logo_path.strip('"')
 
         if not os.path.exists(logo_path):
             print(f"Error: Logo image not found at '{logo_path}'. Exiting.")
-            sys.exit(1) # Exit if logo not found
+            sys.exit(1)
 
         print(f"\nSaving consolidated report to {output_filename} with multiple sheets...")
         try:
@@ -237,168 +337,94 @@ def generate_consolidated_report_from_excel(
                     workbook  = writer.book
                     worksheet = workbook.add_worksheet(sanitized_sheet_name)
 
-                    # Define formats
                     observations_format = workbook.add_format({
-                        'bold': True,
-                        'italic': True,
-                        'align': 'center',
-                        'valign': 'vcenter',
-                        'bg_color': '#4F81BD',
-                        'border': 1
+                        'bold': True, 'italic': True, 'align': 'center', 'valign': 'vcenter', 'bg_color': '#4F81BD', 'border': 1
                     })
-
-                    # New format for "Results" data that should NOT have borders
                     to_be_determined_no_border_format = workbook.add_format({
-                        'align': 'left',
-                        'valign': 'top',
-                        'font_size': 12,
-                        'italic': True
+                        'align': 'left', 'valign': 'top', 'font_size': 12, 'italic': True
                     })
-
                     results_data_no_border_format = workbook.add_format({
-                        'align': 'left',
-                        'valign': 'top',
-                        'font_size': 12
+                        'align': 'left', 'valign': 'top', 'font_size': 12
                     })
-
                     results_data_no_border_format2 = workbook.add_format({
-                        'align': 'right',
-                        'valign': 'top',
-                        'font_size': 12
+                        'align': 'right', 'valign': 'top', 'font_size': 12
                     })
-
-                    # Original default text format, now correctly applied only to the main data table
                     default_text_format = workbook.add_format({
-                        'align': 'left',
-                        'valign': 'top',
-                        'border': 1
+                        'align': 'left', 'valign': 'top', 'border': 1
                     })
-
                     header_format = workbook.add_format({
-                        'bold': True,
-                        'align': 'left',
-                        'valign': 'top',
-                        'bg_color': '#4F81BD',
-                        'border': 1
+                        'bold': True, 'align': 'left', 'valign': 'top', 'bg_color': '#4F81BD', 'border': 1
                     })
-
                     results_header_format = workbook.add_format({
-                        'bold': True,
-                        'align': 'right',
-                        'valign': 'top',
-                        'font_size': 12,
-                        'underline': True,
+                        'bold': True, 'align': 'right', 'valign': 'top', 'font_size': 12, 'underline': True,
                     })
-
                     header_bg_color = '#000000'
                     header_bg_format = workbook.add_format({'bg_color': header_bg_color})
 
-
-                    # Set column widths BEFORE writing content to ensure cells fit
                     for col_name, width in column_widths.items():
                         col_idx = col_indices[col_name]
                         worksheet.set_column(col_idx, col_idx, width)
 
-                    # Explicitly fill cells with the header_bg_color (now from Excel row 1 to 10, Python 0 to 9)
-                    for r in range(0, 9): # Rows 0 to 8 (Excel 1 to 9). Total 9 rows. CONFIDENTIAL is at Excel 9
-                        for c in range(0, 5): # Columns 0 to 4 (Excel A to E)
+                    for r in range(0, 9):
+                        for c in range(0, 5):
                             worksheet.write(r, c, None, header_bg_format)
-
-                    # Also fill row 9 (Excel 10) for the blank row below CONFIDENTIAL for consistency
                     for c in range(0, 5):
                         worksheet.write(9, c, None, header_bg_format)
 
+                    worksheet.set_row(0, 30)
+                    worksheet.set_row(1, 30)
+                    worksheet.set_row(2, 25)
+                    worksheet.set_row(3, 25)
+                    worksheet.set_row(4, 25)
+                    worksheet.set_row(5, 25)
+                    worksheet.set_row(6, 10)
+                    worksheet.set_row(7, 10)
+                    worksheet.set_row(8, 30)
+                    worksheet.set_row(9, 10)
 
-                    # --- Set row heights for the header rows (now starting from Python row 0, Excel row 1) ---
-                    worksheet.set_row(0, 30) # For CIMB Securities (part 1 of merge, Excel 1)
-                    worksheet.set_row(1, 30) # For CIMB Securities (part 2 of merge, Excel 2)
-                    worksheet.set_row(2, 25) # For Host Configuration (part 1 of merge, Excel 3)
-                    worksheet.set_row(3, 25) # For Host Configuration (part 2 of merge, Excel 4)
-                    worksheet.set_row(4, 25) # For Initial Assessment (part 1 of merge, Excel 5)
-                    worksheet.set_row(5, 25) # For Initial Assessment (part 2 of merge, Excel 6)
-                    worksheet.set_row(6, 10) # Empty row (Excel 7)
-                    worksheet.set_row(7, 10) # Empty row (Excel 8)
-                    worksheet.set_row(8, 30) # For CONFIDENTIAL (Excel 9)
-                    worksheet.set_row(9, 10) # Empty row below CONFIDENTIAL (Excel 10)
-
-
-                    # --- Add Header content (now starting from Python row 0, Excel row 1) ---
-                    # Insert LGMS Logo (A1 equivalent)
                     image_height_cm = 3.47
                     image_width_cm = 9.06
                     image_height_pixels = round((image_height_cm / 2.54) * 96)
                     image_width_pixels = round((image_width_cm / 2.54) * 96)
 
-                    worksheet.insert_image(2, 0, logo_path, { # Now at row index 0 (Excel row 1)
-                        'x_offset': 5,
-                        'y_offset': 5,
-                        'width': image_width_pixels,
-                        'height': image_height_pixels,
-                        'object_position': 1
+                    worksheet.insert_image(2, 0, logo_path, {
+                        'x_offset': 5, 'y_offset': 5, 'width': image_width_pixels, 'height': image_height_pixels, 'object_position': 1
                     })
 
-                    # Text content using merged cells with CENTER alignment - Adjusted merge ranges
-                    worksheet.merge_range(0, 2, 1, 4, 'CIMB Securities Sdn Bhd', workbook.add_format({'bold': True, 'font_size': 28, 'font_color': '#FFFFFF', 'bg_color': header_bg_color, 'align': 'left', 'valign': 'vcenter'})) # Merged Excel rows 1 and 2
-                    worksheet.merge_range(2, 2, 3, 4, 'Host Configuration Review Security Assessment Quick Result', workbook.add_format({'font_size': 20, 'font_color': '#FFFFFF', 'bg_color': header_bg_color, 'align': 'left', 'valign': 'vcenter'})) # Merged Excel rows 3 and 4
-                    worksheet.merge_range(4, 2, 5, 4, '(Initial Assessment - Windows Server 2022 Std)', workbook.add_format({'font_size': 20, 'font_color': '#FFFFFF', 'bg_color': header_bg_color, 'align': 'left', 'valign': 'vcenter'})) # Merged Excel rows 5 and 6
-                    worksheet.merge_range(6, 2, 7, 4, '', workbook.add_format({'bg_color': header_bg_color})) # Merged Excel rows 7 and 8 (blank lines)
-                    worksheet.merge_range(8, 2, 8, 4, 'CONFIDENTIAL', workbook.add_format({'font_size': 24, 'font_color': '#FF0000', 'bg_color': header_bg_color, 'bold': True, 'align': 'left', 'valign': 'vcenter'})) # Now in Excel row 9
+                    worksheet.merge_range(0, 2, 1, 4, 'CIMB Securities Sdn Bhd', workbook.add_format({'bold': True, 'font_size': 28, 'font_color': '#FFFFFF', 'bg_color': header_bg_color, 'align': 'left', 'valign': 'vcenter'}))
+                    worksheet.merge_range(2, 2, 3, 4, 'Host Configuration Review Security Assessment Quick Result', workbook.add_format({'font_size': 20, 'font_color': '#FFFFFF', 'bg_color': header_bg_color, 'align': 'left', 'valign': 'vcenter'}))
+                    worksheet.merge_range(4, 2, 5, 4, '(Initial Assessment - Windows Server 2022 Std)', workbook.add_format({'font_size': 20, 'font_color': '#FFFFFF', 'bg_color': header_bg_color, 'align': 'left', 'valign': 'vcenter'}))
+                    worksheet.merge_range(6, 2, 7, 4, '', workbook.add_format({'bg_color': header_bg_color}))
+                    worksheet.merge_range(8, 2, 8, 4, 'CONFIDENTIAL', workbook.add_format({'font_size': 24, 'font_color': '#FF0000', 'bg_color': header_bg_color, 'bold': True, 'align': 'left', 'valign': 'vcenter'}))
 
+                    worksheet.write(10, 0, 'Results', results_header_format)
+                    worksheet.write(11, 0, 'Target:', results_data_no_border_format2)
+                    worksheet.write(11, 1, 'Windows Server 2022 Std', results_data_no_border_format)
+                    worksheet.write(12, 0, 'Compliance Checklist:', results_data_no_border_format2)
+                    worksheet.write(12, 1, 'CIMB Microsoft Windows Server Security Baseline', results_data_no_border_format)
+                    worksheet.write(13, 0, 'Start Date:', results_data_no_border_format2)
+                    worksheet.write(13, 1, '9 May 2025', results_data_no_border_format)
+                    worksheet.write(14, 0, 'End Date:', results_data_no_border_format2)
+                    worksheet.write(14, 1, 'To be determined', to_be_determined_no_border_format)
 
-                    # --- Add content from row 11 to 15 (Excel rows 11-15) ---
-                    # Row 11: "Results" (merged across A and B)
-                    worksheet.write(10, 0, 'Results', results_header_format) # Excel row 11
-
-                    # Row 12: Target
-                    worksheet.write(11, 0, 'Target:', results_data_no_border_format2) # Excel row 12, Column A
-                    worksheet.write(11, 1, 'Windows Server 2022 Std', results_data_no_border_format) # Excel row 12, Column B
-
-                    # Row 13: Compliance Checklist
-                    worksheet.write(12, 0, 'Compliance Checklist:', results_data_no_border_format2) # Excel row 13, Column A
-                    worksheet.write(12, 1, 'CIMB Microsoft Windows Server Security Baseline', results_data_no_border_format) # Excel row 13, Column B
-
-                    # Row 14: Start Date
-                    worksheet.write(13, 0, 'Start Date:', results_data_no_border_format2) # Excel row 14, Column A
-                    worksheet.write(13, 1, '9 May 2025', results_data_no_border_format) # Excel row 14, Column B
-
-                    # Row 15: End Date
-                    worksheet.write(14, 0, 'End Date:', results_data_no_border_format2) # Excel row 15, Column A
-                    worksheet.write(14, 1, 'To be determined', to_be_determined_no_border_format) # Excel row 15, Column B
-                    # --- End of new content ---
-
-
-                    # Merge and center 'Observations' (Excel row 18) - Now with border
                     worksheet.merge_range(17, 0, 17, len(final_columns) - 1, 'Observations', observations_format)
-
-                    # Write column headers in row 19 (Excel row 19) - Now with border
                     for col_num, value in enumerate(final_columns):
                         worksheet.write(18, col_num, value, header_format)
 
-                    # START: Explicitly write data and apply merges
-                    # Data now starts from Excel row 20 (index 19)
                     data_start_row_excel = 19
-
-                    # Iterate through the DataFrame to write each logical entry (which spans 2 physical rows)
                     for i in range(0, len(df), 2):
-                        current_logical_row_data = df.iloc[i] # This is the row containing the actual data
-
-                        # Calculate actual Excel rows for this logical item
+                        current_logical_row_data = df.iloc[i]
                         excel_data_row_start = data_start_row_excel + i
                         excel_data_row_end = data_start_row_excel + i + 1
-
-                        # Loop through all final columns to merge and write data - Now using default_text_format with border
                         for col_name in final_columns:
                             col_idx = col_indices[col_name]
                             cell_value = current_logical_row_data[col_name]
-
                             worksheet.merge_range(
                                 excel_data_row_start, col_idx,
                                 excel_data_row_end, col_idx,
-                                cell_value, # Pass the actual value from the first row of the logical entry
+                                cell_value,
                                 default_text_format
                             )
-                    # END: Explicitly write data and apply merges
-
             print(f"Consolidated report saved to {output_filename}")
         except Exception as e:
             print(f"Error saving Excel file for sheet '{sanitized_sheet_name}': {e}")
@@ -409,25 +435,21 @@ def generate_consolidated_report_from_excel(
 # --- How to call the modified function ---
 
 cimb_ha_report_excel_file = input("Please enter the full path to the CIMB HA report.xlsx (e.g., C:\\path\\to\\CIMB HA report.xlsx): ")
-# Strip any leading/trailing double quotes from the path
 cimb_ha_report_excel_file = cimb_ha_report_excel_file.strip('"')
-# Dynamically get all sheet names from the Excel file
 try:
-    # Explicitly specify the engine as 'openpyxl' for reading sheet names
     xl = pd.ExcelFile(cimb_ha_report_excel_file, engine='openpyxl')
     cimb_ha_sheet_names_list = xl.sheet_names
 except Exception as e:
     print(f"Error reading sheet names from '{cimb_ha_report_excel_file}': {e}")
-    sys.exit(1) # Exit if cannot read sheet names
+    sys.exit(1)
 
 host_template_excel = input("Please enter the full path to the Host Configuration Report Template.xlsx (e.g., C:\\path\\to\\Host Configuration Report Template.xlsx): ")
-# Strip any leading/trailing double quotes from the path
 host_template_excel = host_template_excel.strip('"')
 host_template_sheet_name = 'Sheet3'
 
 generate_consolidated_report_from_excel(
     cimb_ha_report_excel_file,
-    cimb_ha_sheet_names_list, # Now passing the dynamically obtained list
+    cimb_ha_sheet_names_list,
     host_template_excel,
     host_template_sheet_name,
     "CIMB HA Report_Final.xlsx"
