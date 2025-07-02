@@ -9,7 +9,7 @@ A report generator, specifically make for CIMB Host Assessment.
 ---
 
 ## Table of Contents
-- [Features](#features)
+- [Feature](#feature)
 - [Installation](#installation)
 - [Usage](#usage)
 - [Note](#note)
