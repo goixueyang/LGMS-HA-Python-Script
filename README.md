@@ -13,12 +13,14 @@ A report generator, specifically make for CIMB Host Assessment.
 - [Installation](#installation)
 - [Usage](#usage)
 - [Note](#note)
+- [Remark](#remark)
 <br />
 
 ## Feature
 * **Feature 1: cisreport.py** This Python script is to extract information from CIS benchmark html file into Excel format.
 * **Feature 2: reportgenerator.py** This Python script is to compare CIMB Value with CIS benchmark report to identify the configuration.
 * **Feature 3: reportdesigner.py** This Python script is coded to design the report same to real case.
+* **Feature 4: hostassessmentreport.py** This Python script is the combination of feature 1, feature 2 and feature 3.
 <br />
 
 ## Installation
@@ -34,11 +36,27 @@ Before using the Python scripts, ensure following libraries are installed.
 * ```openpyxl```
 <br />
 
-In command line, type:
+* In command line, type:
 ```
 pip install beautifulsoup4 pandas openpyxl
 ```
+<br />
 
+**Method 1:**
+* **1. hostassessmentreport.py**
+* -required document:
+* CIS Benchmark Report HTML format
+* Excel file contain 'Checklist' sheet
+* Host Configuration Report Template.xlsx
+* LGMS Logo PNG file
+
+* In command line:
+```
+py hostassessmentreport.py
+```
+<br />
+
+**Method 2:**
 **The order of Python Script execution is important. You should:**
 * **1. cisreport.py**
 * -required document:
@@ -75,3 +93,7 @@ py reportdesigner.py
 
 ## Note
 All documents required you to copy the path by (select file -> right click -> copy as path) and paste them when you execute the Python scripts.
+
+## Remark
+**1. CIMB NO. 2.3.6.6: Pay attention to this row and figure out the necessity of appearance in Domain Controller report.**
+**2. CIMB NO. 2.3.10.4: Pay attention and do research on how to identify AES128_HMAC_SHA2 based on CIMB requirements (currently set as 'Configured' so it would not appear in the final report).**
