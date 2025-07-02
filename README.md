@@ -57,6 +57,7 @@ py hostassessmentreport.py
 <br />
 
 **Method 2:**
+
 **The order of Python Script execution is important. You should:**
 * **1. cisreport.py**
 * -required document:
@@ -96,4 +97,5 @@ All documents required you to copy the path by (select file -> right click -> co
 
 ## Remark
 **1. CIMB NO. 2.3.6.6: Pay attention to this row and figure out the necessity of appearance in Domain Controller report.**
+
 **2. CIMB NO. 2.3.10.4: Pay attention and do research on how to identify AES128_HMAC_SHA2 based on CIMB requirements (currently set as 'Configured' so it would not appear in the final report).**
